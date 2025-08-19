@@ -31,4 +31,88 @@
   <div id="label-container"></div>
 
   <script>
-    const URL = "https:/
+    const URL = "https://teachablemachine.withgoogle.com/models/XEDFXkCZA/"; // เปลี่ยนเป็นโมเดลคุณเอง
+
+    let model, webcam, labelContainer, maxPredictions;
+
+    // ----------------------------
+    // MQTT Setup
+    // ----------------------------
+    let mqttClient;
+    const brokerUrl = 'wss://broker.hivemq.com:8000/mqtt';
+    const clientId = 'clientId-shXpfk4fAE';  // ใช้ Client ID ตามที่ระบุ
+    const topic = 'tomato_2';                // ใช้ Topic ตามที่ระบุ
+
+    function connectMQTT() {
+      mqttClient = mqtt.connect(brokerUrl, { clientId: clientId });
+
+      mqttClient.on('connect', function () {
+        console.log('Connected to HiveMQ over WebSocket');
+        document.getElementById("status").innerText = "Status: Connected to HiveMQ";
+        mqttClient.subscribe(topic, function (err) {
+          if (!err) console.log('Subscribed to topic:', topic);
+        });
+      });
+
+      mqttClient.on('error', function(err){
+        console.error('MQTT connection error:', err);
+        document.getElementById("status").innerText = "Status: MQTT Error";
+      });
+
+      mqttClient.on('message', function(topic, message){
+        console.log('Received message from broker:', message.toString());
+      });
+    }
+
+    // ----------------------------
+    // Teachable Machine Setup
+    // ----------------------------
+    async function init(facingMode) {
+      // โหลดโมเดล
+      const modelURL = URL + "model.json";
+      const metadataURL = URL + "metadata.json";
+      model = await tmImage.load(modelURL, metadataURL);
+      maxPredictions = model.getTotalClasses();
+
+      // Setup Webcam
+      webcam = new tmImage.Webcam(224, 224, false);
+      try {
+        await webcam.setup({ facingMode: facingMode });
+        await webcam.play();
+        window.requestAnimationFrame(loop);
+      } catch (e) {
+        console.error("Webcam setup failed:", e);
+        document.getElementById("label-container").innerText = "Error: " + e.message;
+        return;
+      }
+
+      document.getElementById("webcam-container").appendChild(webcam.canvas);
+      labelContainer = document.getElementById("label-container");
+      labelContainer.innerHTML = "";
+      for (let i = 0; i < maxPredictions; i++) {
+        labelContainer.appendChild(document.createElement("div"));
+      }
+
+      // เชื่อม MQTT
+      connectMQTT();
+    }
+
+    async function loop() {
+      webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      const prediction = await model.predict(webcam.canvas);
+      let payload = {};
+      for (let i = 0; i < maxPredictions; i++) {
+        const className = prediction[i].className;
+        const probability = prediction[i].probability.toFixed(2);
+        labelContainer.childNodes[i].innerHTML = className + ": " + probability;
+        payload[className] = probability;
+      }
+
+      // ส่งไป MQTT
+      if (mqttClient && mqttClient.connected) {
+        mqttClient.publish(topic, JS
